@@ -1,0 +1,5 @@
+.venv
+__pycache__
+
+benchmark_apps
+benchmark_logs

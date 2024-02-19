@@ -1,0 +1,35 @@
+{
+    "benchmark_suites": [
+        {
+            "suite_name": "DaCapo",
+            "jar_path": "benchmark_apps/dacapo-23.11-chopin.jar",
+            "benchmarks_config": [
+                {
+                    "name": "kafka",
+                    "run_options": { "extra_java_options": "-XX:+ExitOnOutOfMemoryError"}
+                },
+                {
+                    "name": "cassandra",
+                    "run_options": {
+                        "extra_java_options": "-Djava.security.manager=allow"
+                    }
+                },
+                {
+                    "name": "h2o",
+                    "run_options": {
+                        "extra_java_options": "-Dsys.ai.h2o.debug.allowJavaVersions=21"
+                    }
+                }
+            ]
+        },
+        {
+            "suite_name": "PetClinic",
+            "jar_path": "benchmark_apps/spring-petclinic-3.3.0-SNAPSHOT.jar"
+            "run_options": {
+                "post_exec_script": "benchmark-spring.sh"
+                "iterations": 1
+            }
+            
+        }
+    ]
+}
