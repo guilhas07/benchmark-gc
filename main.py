@@ -9,7 +9,6 @@ from model import (
     StatsMatrix,
 )
 from typing import Optional
-import interactive
 
 
 def main(argv=None) -> int:
@@ -37,14 +36,6 @@ def main(argv=None) -> int:
         action="store_true",
         help="""Skip the benchmarks and compute the matrix with previously obtained garbage collector results.
         You must specify the java jdk used to obtain previous results. The jdk version is present in the name of each benchmark stat file. See `--jdk`.""",
-    )
-
-    parser.add_argument(
-        "-i",
-        "--interactive",
-        dest="interactive",
-        action="store_true",
-        help="""Run benchmark in a interactive way""",
     )
 
     parser.add_argument(
@@ -115,42 +106,36 @@ def main(argv=None) -> int:
             return 0
 
     if skip_benchmarks:
-        assert (
-            jdk is not None
-        ), "Please provide the jdk in order to load previously obtained results."
+        assert jdk is not None, (
+            "Please provide the jdk in order to load previously obtained results."
+        )
         garbage_collectors = utils.get_garbage_collectors()
     else:
         jdk, garbage_collectors = utils.get_java_env_info()
 
-    assert (
-        jdk is not None and garbage_collectors is not None
-    ), "Please make sure you have Java installed on your system."
+    assert jdk is not None and garbage_collectors is not None, (
+        "Please make sure you have Java installed on your system."
+    )
 
-    if args.interactive:
-        assert (
-            skip_benchmarks is False
-        ), "Skipping benchmarks is not supported in interactive mode."
-        interactive.run(jdk, garbage_collectors)
+    if config is not None:
+        c = BenchmarkSuiteCollection.load_from_json(config)
+        benchmark_reports = c.run_benchmarks(jdk, garbage_collectors, timeout)
     else:
-        if config is not None:
-            c = BenchmarkSuiteCollection.load_from_json(config)
-            benchmark_reports = c.run_benchmarks(jdk, garbage_collectors, timeout)
-        else:
-            benchmark_reports = benchmark.run_benchmarks(
-                iterations,
-                jdk,
-                garbage_collectors,
-                skip_benchmarks,
-                benchmarks,
-                timeout,
-            )
+        benchmark_reports = benchmark.run_benchmarks(
+            iterations,
+            jdk,
+            garbage_collectors,
+            skip_benchmarks,
+            benchmarks,
+            timeout,
+        )
 
-        if len(benchmark_reports) == 0:
-            print("No GarbageCollector had successfull benchmarks.")
-            return 0
+    if len(benchmark_reports) == 0:
+        print("No GarbageCollector had successful benchmarks.")
+        return 0
 
-        matrix = StatsMatrix.build_stats_matrix(benchmark_reports, "G1")
-        matrix.save_to_json(jdk)
+    matrix = StatsMatrix.build_stats_matrix(benchmark_reports, "G1")
+    matrix.save_to_json(jdk)
     return 0
 
 
