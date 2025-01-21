@@ -2,9 +2,8 @@
 
 import argparse
 
-from benchmark_config import BenchmarkConfig, BenchmarkSuiteCollection
+from benchmark import BenchmarkSuiteCollection
 import utils
-import benchmark
 from model import (
     StatsMatrix,
 )
@@ -16,14 +15,6 @@ def main(argv=None) -> int:
         description="Compute throughput and average pause time for benchmarks"
     )
     parser.add_argument(
-        "-d",
-        "--debug",
-        dest="debug",
-        action="store_true",
-        help="Enable benchmark debugging.",
-    )
-    parser.add_argument(
-        "-c",
         "--clean",
         dest="clean",
         action="store_true",
@@ -46,15 +37,6 @@ def main(argv=None) -> int:
     )
 
     parser.add_argument(
-        "-n",
-        "--number-iterations",
-        dest="iterations",
-        default=10,
-        type=int,
-        help="Number of iterations to run benchmarks. Increase this number to achieve more reliable metrics.",
-    )
-
-    parser.add_argument(
         "-t",
         "--timeout",
         dest="timeout",
@@ -64,37 +46,20 @@ def main(argv=None) -> int:
     )
 
     parser.add_argument(
-        "-b",
-        "--benchmarks",
-        dest="benchmarks",
-        choices=[group.value for group in benchmark.BENCHMARK_GROUP],
-        help="Specify the group of benchmarks to run",
-        nargs="+",
-    )
-
-    parser.add_argument(
+        "-c",
         "--config",
         dest="config",
         help="Specify a benchmark_config file to run",
+        required=True,
     )
 
     args = parser.parse_args(argv)
     parser.print_help()
     skip_benchmarks = args.skip_benchmarks
-    iterations: int = args.iterations
     clean = args.clean
     jdk: Optional[str] = args.jdk
-    benchmarks = args.benchmarks and [
-        benchmark.BENCHMARK_GROUP(el) for el in args.benchmarks
-    ]
     timeout: int = args.timeout
-    debug = args.debug
     config = args.config
-
-    benchmark.set_debug(debug)
-
-    print(f"{debug=}")
-    print(benchmarks)
 
     # Always clean benchmark garbage collection logs
     utils.clean_logs()
@@ -117,18 +82,11 @@ def main(argv=None) -> int:
         "Please make sure you have Java installed on your system."
     )
 
-    if config is not None:
-        c = BenchmarkSuiteCollection.load_from_json(config)
-        benchmark_reports = c.run_benchmarks(jdk, garbage_collectors, timeout)
-    else:
-        benchmark_reports = benchmark.run_benchmarks(
-            iterations,
-            jdk,
-            garbage_collectors,
-            skip_benchmarks,
-            benchmarks,
-            timeout,
-        )
+    c = BenchmarkSuiteCollection.load_from_json(config)
+    heap_sizes: list[str] = utils.get_heap_sizes()
+    benchmark_reports = c.run_benchmarks(
+        jdk, garbage_collectors, timeout, heap_sizes, skip_benchmarks
+    )
 
     if len(benchmark_reports) == 0:
         print("No GarbageCollector had successful benchmarks.")

@@ -62,16 +62,16 @@ class StatsMatrix:
         found = False
         garbage_collectors = set()
         for gc in benchmark_reports:
-            assert (
-                gc not in garbage_collectors
-            ), "Results should be of distinct garbage collectors."
+            assert gc not in garbage_collectors, (
+                "Results should be of distinct garbage collectors."
+            )
             garbage_collectors.add(gc)
             if gc == default_gc:
                 found = True
 
-        assert (
-            found
-        ), f"default_garbage_collector: {default_gc} was not found in benchmark_reports"
+        assert found, (
+            f"default_garbage_collector: {default_gc} was not found in benchmark_reports"
+        )
 
         # Populate list of benchmark names with the benchmarks present in
         # the default garbage collector
@@ -83,13 +83,13 @@ class StatsMatrix:
                 if default_jdk is None:
                     default_jdk = report_list[0].jdk
 
-                assert (
-                    report.jdk == default_jdk
-                ), "All benchmark reports should have the same runtime"
+                assert report.jdk == default_jdk, (
+                    "All benchmark reports should have the same runtime"
+                )
 
-                assert (
-                    report.benchmark_name not in default_gc_reports[heap_size]
-                ), f"Default garbage collector {default_gc} shouldn't have repeated reports for the same benchmark {report.benchmark_name}"
+                assert report.benchmark_name not in default_gc_reports[heap_size], (
+                    f"Default garbage collector {default_gc} shouldn't have repeated reports for the same benchmark {report.benchmark_name}"
+                )
 
                 default_gc_reports[heap_size].append(report.benchmark_name)
 
@@ -99,24 +99,24 @@ class StatsMatrix:
 
         for gc in benchmark_reports:
             for heap_size, reports_list in benchmark_reports[gc].items():
-                assert (
-                    heap_size in default_gc_reports
-                ), "All garbage collectors should have stats for the same heap sizes"
+                assert heap_size in default_gc_reports, (
+                    "All garbage collectors should have stats for the same heap sizes"
+                )
 
-                assert (
-                    len(reports_list) == len(default_gc_reports[heap_size])
-                ), "All garbage collectors should have the same number of benchmark reports"
+                assert len(reports_list) == len(default_gc_reports[heap_size]), (
+                    "All garbage collectors should have the same number of benchmark reports"
+                )
 
                 gc_benchmarks = {i.benchmark_name for i in reports_list}
 
-                assert gc_benchmarks == set(
-                    default_gc_reports[heap_size]
-                ), "All garbage collectors should have the same benchmarks"
+                assert gc_benchmarks == set(default_gc_reports[heap_size]), (
+                    "All garbage collectors should have the same benchmarks"
+                )
 
                 for report in reports_list:
-                    assert (
-                        report.jdk == default_jdk
-                    ), "All benchmark reports should be from the same runtime"
+                    assert report.jdk == default_jdk, (
+                        "All benchmark reports should be from the same runtime"
+                    )
 
                     matrix[heap_size][gc].throughput += report.throughput
                     matrix[heap_size][gc].pause_time += report.p90_pause_time
@@ -166,9 +166,9 @@ class GarbageCollectorReport:
         """
         Args:
             heap_size: int -> size of the heap used for the list of benchmark results.
-            benchmark_reports: list[BenchmarkResult] -> Valid benchmark results (meaning only successfull benchmarks), with atleast one element.
+            benchmark_reports: list[BenchmarkResult] -> Valid benchmark results (meaning only successful benchmarks), with at least one element.
             All benchmark results should have an heap_size equal to the provided heap_size and should be from the same garbage collector.
-            You can check the validity of the benchmark with benchmark_result.is_successfull().
+            You can check the validity of the benchmark with benchmark_result.is_successful().
 
         Returns:
             stats: GarbageCollectorStats
@@ -185,9 +185,9 @@ class GarbageCollectorReport:
             p90_gc_pause_time.append(result.p90_pause_time)
             gc_throughput.append(result.throughput)
 
-            assert (
-                result.benchmark_name not in benchmarks
-            ), "There shouldn't be repeated benchmarks"
+            assert result.benchmark_name not in benchmarks, (
+                "There shouldn't be repeated benchmarks"
+            )
             benchmarks.append(result.benchmark_name)
 
         benchmarks.sort()
@@ -205,7 +205,7 @@ class GarbageCollectorReport:
     def build_garbage_collector_report(
         benchmarks_results: dict[str, list[BenchmarkReport]],
     ) -> GarbageCollectorReport:
-        """Builds a garbage collector report, taking into account every successfull benchmark run for every heap_size.
+        """Builds a garbage collector report, taking into account every successful benchmark run for every heap_size.
 
         Args:
             benchmarks_results: Dictionary with `heap_size` as key and value as the list of `BenchmarkResult`s for that `heap_size`.
@@ -216,40 +216,40 @@ class GarbageCollectorReport:
         """
         stats = []
 
-        assert (
-            len(benchmarks_results) > 0
-        ), "benchmark_reports should have one or more keys"
+        assert len(benchmarks_results) > 0, (
+            "benchmark_reports should have one or more keys"
+        )
 
         gc = ""
         jdk = ""
         for heap_size, results in benchmarks_results.items():
-            assert (
-                len(results) >= 0
-            ), "List of benchmark results should have one element or more"
+            assert len(results) >= 0, (
+                "List of benchmark results should have one element or more"
+            )
 
             if gc == "" and jdk == "":
                 gc = results[0].garbage_collector
                 jdk = results[0].jdk
 
-            assert all(
-                el.is_successfull() for el in results
-            ), "All benchmarks should be successfull"
+            assert all(el.is_successful() for el in results), (
+                "All benchmarks should be successful"
+            )
 
-            assert all(
-                el.heap_size == heap_size for el in results
-            ), f"All benchmark results should have the same heap size {heap_size}"
+            assert all(el.heap_size == heap_size for el in results), (
+                f"All benchmark results should have the same heap size {heap_size}"
+            )
 
-            assert all(
-                el.is_successfull() for el in results
-            ), "All benchmark results should be successfull"
+            assert all(el.is_successful() for el in results), (
+                "All benchmark results should be successful"
+            )
 
-            assert all(
-                el.garbage_collector == gc for el in results
-            ), "All benchmark results should be from the same garbage collector"
+            assert all(el.garbage_collector == gc for el in results), (
+                "All benchmark results should be from the same garbage collector"
+            )
 
-            assert all(
-                el.jdk == jdk for el in results
-            ), "All benchmark results should be from the same runtime"
+            assert all(el.jdk == jdk for el in results), (
+                "All benchmark results should be from the same runtime"
+            )
             stats.append(GarbageCollectorReport._build_gc_stats(heap_size, results))
 
         return GarbageCollectorReport(gc, jdk, stats)
@@ -415,7 +415,7 @@ class BenchmarkReport:
             throughput,
         )
 
-    def is_successfull(self):
+    def is_successful(self):
         return self.error is None
 
     def save_to_json(self):

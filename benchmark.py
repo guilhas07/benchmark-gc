@@ -1,123 +1,326 @@
+from __future__ import annotations
+from dataclasses import dataclass
+import json
 import glob
 import re
-import subprocess
-import time
-from collections import defaultdict
-from enum import Enum
-from os import path
-from threading import Timer
-from typing import Optional
-import json
-
 import numpy
+from collections import defaultdict
+import subprocess
+from threading import Timer
+import time
+
+from typing import Any, Optional, get_args, get_type_hints
+import string
 
 import utils
-from model import (
-    BenchmarkReport,
-    ErrorReport,
-    GarbageCollectorReport,
-)
+from model import BenchmarkReport, ErrorReport, GarbageCollectorReport
 
 
-class BENCHMARK_GROUP(Enum):
-    RENAISSANCE = "Renaissance"
-    DACAPO = "DaCapo"
+@dataclass
+class BenchmarkRunOptions:
+    command: Optional[str] = None
+    java_options: Optional[str] = None
+    post_exec_script: Optional[str] = None
+    timeout: Optional[int] = None
 
-
-_debug = False
-_dir = path.dirname(__file__)
-_BENCHMARK_PATH = f"{_dir}/benchmark_apps"
-_BENCHMARK_CONFIG_PATH = f"{_dir}/benchmarks_config.json"
-_benchmark_paths = {
-    BENCHMARK_GROUP.RENAISSANCE.value: f"{_BENCHMARK_PATH}/renaissance-gpl-0.15.0.jar",
-    BENCHMARK_GROUP.DACAPO.value: f"{_BENCHMARK_PATH}/dacapo-23.11-chopin.jar",
-}
-
-benchmarks_config = {}
-try:
-    with open(_BENCHMARK_CONFIG_PATH) as f:
-        benchmarks_config = json.loads(f.read())
-except Exception as e:
-    print(f"Error while reading file {_BENCHMARK_CONFIG_PATH} {str(e)[:50]}")
-
-
-def set_debug(value: bool):
-    global _debug
-    _debug = value
-
-
-def _get_benchmarks(benchmark_group: BENCHMARK_GROUP) -> list[str]:
-    match benchmark_group:
-        case BENCHMARK_GROUP.RENAISSANCE:
-            result = subprocess.run(
-                [
-                    "java",
-                    "-jar",
-                    _benchmark_paths[benchmark_group.value],
-                    "--raw-list",
-                ],
-                capture_output=True,
-                text=True,
+    def __post_init__(self):
+        # NOTE: due to the import of __future__ annotations the
+        # hints are stored as strings and need to be resolved with get_type_hints
+        for field_name, field_def in get_type_hints(self.__class__).items():
+            v = getattr(self, field_name)
+            assert type(v) in get_args(field_def), (
+                f"Error: {field_name} with type {type(v)} should have type in {get_args(field_def)}."
             )
-            assert result.stderr == "", result.stderr
-            return result.stdout.splitlines()
 
-        case BENCHMARK_GROUP.DACAPO:
-            result = subprocess.run(
-                [
-                    "java",
-                    "-jar",
-                    _benchmark_paths[benchmark_group.value],
-                    "--list-benchmarks",
-                ],
-                capture_output=True,
-                text=True,
+
+@dataclass
+class BenchmarkConfig:
+    name: str
+    run_options: BenchmarkRunOptions | None
+
+    def __init__(self, name: str, run_options: Optional[dict] = None):
+        self.name = name
+        self.run_options = (
+            run_options if run_options is None else BenchmarkRunOptions(**run_options)
+        )
+        self.__post_init__()
+
+    def __post_init__(self):
+        # NOTE: No need to validate `run_options` because it errors before in __init__
+        _validate_str(getattr(self, "name"), self.__class__.__name__, "name")
+
+    def run(
+        self,
+        suite_name: str,
+        jar_path: str,
+        gc: str,
+        heap_size: str,
+        jdk: str,
+        timeout: int,
+        command: Optional[str],
+        java_opt: Optional[str],
+        exec_script: Optional[str],
+    ) -> BenchmarkReport:
+        # NOTE: avoiding opt.variable or variable due to opt.variable possibly being `falsy`
+        if opt := self.run_options:
+            timeout = opt.timeout if opt.timeout is not None else timeout
+            command = opt.command if opt.command is not None else command
+            java_opt = opt.java_options if opt.java_options is not None else java_opt
+            exec_script = (
+                opt.post_exec_script
+                if opt.post_exec_script is not None
+                else exec_script
             )
-            assert result.stderr == "", result.stderr
-            return result.stdout.split()
-        case _:
-            raise AssertionError("Benchmark group is not supported")
+
+        return _run_benchmark(
+            suite_name,
+            self.name,
+            jar_path,
+            gc,
+            heap_size,
+            jdk,
+            timeout,
+            command,
+            java_opt,
+            exec_script,
+        )
 
 
-def _get_benchmark_command(
-    benchmark_group: BENCHMARK_GROUP,
-    benchmark: str,
+@dataclass
+class BenchmarkSuite:
+    """
+    Represents a suite of benchmarks to be executed
+
+    Attributes:
+        suite_name: Name used to save log/stats files
+        jar_path: Path to your suite jar
+        run_options: Options to run your benchmarks
+        benchmarks_config: A list of individual benchmark configurations.
+            If this is specified your suite will use the benchmark name like this:
+            (default java options) (java_options) ./jar_path **benchmark_name** (benchmark_options)
+            NOTE: It is possible to override every benchmark option in BenchmarkSuite by specifying it in `BenchmarkConfig`
+    """
+
+    suite_name: str
+    jar_path: str
+    run_options: BenchmarkRunOptions | None
+    benchmarks_config: list[BenchmarkConfig] | None
+
+    def __init__(
+        self, suite_name, jar_path, run_options=None, benchmarks_config=None
+    ) -> None:
+        self.suite_name = suite_name
+        self.jar_path = jar_path
+        self.run_options = (
+            run_options if run_options is None else BenchmarkRunOptions(**run_options)
+        )
+        self.benchmarks_config = (
+            [BenchmarkConfig(**config) for config in benchmarks_config]
+            if benchmarks_config is not None
+            else None
+        )
+        self.__post_init__()
+
+    def __post_init__(self):
+        _validate_str(self.suite_name, self.__class__.__name__, "suite_name")
+        _validate_str(self.jar_path, self.__class__.__name__, "jar_path")
+
+        allowed_chars = string.ascii_letters + string.digits + " -_"
+        for c in self.suite_name:
+            if c not in allowed_chars:
+                raise ValueError(
+                    f"Error: '{self.suite_name}' has invalid characters: '{c}'. Allowed Characters: {allowed_chars}."
+                )
+        if self.benchmarks_config is not None and len(self.benchmarks_config) == 0:
+            raise ValueError("Error: Invalid list of benchmarks_config provided.")
+        names = {config.name for config in self.benchmarks_config or {}}
+        if len(names) != len(self.benchmarks_config or {}):
+            raise ValueError("Error: benchmark names should be unique.")
+
+    def run(
+        self, gc, heap_size, jdk, timeout
+    ) -> tuple[list[BenchmarkReport], list[BenchmarkReport]]:
+        """Runs a Benchmark Suite
+
+        Args:
+            gc: Garbage Collector to be used when running benchmark
+            heap_size: Selected Heap size to run benchmark
+            jdk: Java Development Kit in use
+            timeout: Time after which the benchmark process will be killed
+
+        Returns:
+            (success_benchmarks: list[BenchmarkReport], failed_benchmarks: list[BenchmarkReport])
+        """
+
+        def handle_report(report: BenchmarkReport):
+            nonlocal success_benchmarks
+            nonlocal failed_benchmarks
+            (
+                success_benchmarks if report.is_successful() else failed_benchmarks
+            ).append(report)
+
+        success_benchmarks: list[BenchmarkReport] = []
+        failed_benchmarks: list[BenchmarkReport] = []
+        command = None
+        java_opt = None
+        exec_script = None
+        if opt := self.run_options:
+            timeout = opt.timeout if opt.timeout is not None else timeout
+            command = opt.command
+            java_opt = opt.java_options
+            exec_script = opt.post_exec_script
+
+        if self.benchmarks_config is not None:
+            for b in self.benchmarks_config:
+                report = b.run(
+                    self.suite_name,
+                    self.jar_path,
+                    gc,
+                    heap_size,
+                    jdk,
+                    timeout,
+                    command,
+                    java_opt,
+                    exec_script,
+                )
+                handle_report(report)
+        else:
+            report = _run_benchmark(
+                self.suite_name,
+                self.suite_name,
+                self.jar_path,
+                gc,
+                heap_size,
+                jdk,
+                timeout,
+                command,
+                java_opt,
+                exec_script,
+            )
+            handle_report(report)
+
+        return success_benchmarks, failed_benchmarks
+
+
+@dataclass
+class BenchmarkSuiteCollection:
+    benchmark_suites: list[BenchmarkSuite]
+
+    def __init__(self, benchmark_suites) -> None:
+        self.benchmark_suites = [BenchmarkSuite(**suite) for suite in benchmark_suites]
+        self.__post_init__()
+
+    def __post_init__(self):
+        if len(self.benchmark_suites) == 0:
+            raise ValueError(
+                "Error: Please provide at least one benchmark suite to test."
+            )
+
+    def run_benchmarks(
+        self,
+        jdk: str,
+        gcs: list[str],
+        timeout: int,
+        heap_sizes: list[str],
+        skip_benchmarks: bool,
+    ) -> dict[str, dict[str, list[BenchmarkReport]]]:
+        benchmark_reports: dict[str, dict[str, list[BenchmarkReport]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+        failed_benchmarks: dict[str, dict[str, list[tuple[str, str]]]] = defaultdict(
+            lambda: defaultdict(list)
+        )
+
+        for gc in gcs:
+            for heap_size in heap_sizes:
+                if skip_benchmarks:
+                    success, failed = _load_benchmark_reports(gc, heap_size, jdk)
+                    benchmark_reports[gc][heap_size].extend(success)
+
+                    for r in failed:
+                        failed_benchmarks[heap_size][r.benchmark_name].append(
+                            (r.garbage_collector, r.error)  # type: ignore -> error is not None so ignore type checker
+                        )
+                else:
+                    for suite in self.benchmark_suites:
+                        success, failed = suite.run(gc, heap_size, jdk, timeout)
+
+                        benchmark_reports[gc][heap_size].extend(success)
+
+                        for r in failed:
+                            failed_benchmarks[heap_size][r.benchmark_name].append(
+                                (r.garbage_collector, r.error)  # type: ignore -> error is not None so ignore type checker
+                            )
+
+        # NOTE: using list to avoid modifying dict while iterating
+        for gc in list(benchmark_reports):
+            for heap_size, results in list(benchmark_reports[gc].items()):
+                valid_results = [
+                    el
+                    for el in results
+                    if failed_benchmarks.get(el.heap_size, {}).get(el.benchmark_name)
+                    is None
+                ]
+
+                if len(valid_results) == 0:
+                    del benchmark_reports[gc][heap_size]
+                    continue
+
+                benchmark_reports[gc][heap_size] = valid_results
+                assert all(el.is_successful() for el in valid_results), (
+                    "All benchmarks should be successful"
+                )
+
+            if len(benchmark_reports[gc]) > 0:
+                GarbageCollectorReport.build_garbage_collector_report(
+                    benchmark_reports[gc]
+                ).save_to_json()
+            else:
+                f"Garbage Collector {gc} doesn't have successful benchmarks."
+                del benchmark_reports[gc]
+
+        if len(failed_benchmarks) > 0:
+            error_report = ErrorReport(jdk, failed_benchmarks)
+            error_report.save_to_json()
+
+        return benchmark_reports
+
+    @staticmethod
+    def load_from_json(file_path: str) -> BenchmarkSuiteCollection:
+        with open(file_path) as f:
+            try:
+                data = json.loads(f.read())
+            except Exception as e:
+                raise ValueError(f"Error: Couldn't read {file_path=}: {e}.")
+
+            return BenchmarkSuiteCollection(**data)
+
+
+def _validate_str(value: Any, class_name: str, field_name: str):
+    """Check if given value is a string with length > 0.
+        Raises AssertionError with msg if it's not the case.
+
+    Args:
+        value: Value to validate
+        field_name: Field being validated
+    """
+    err_str_msg = "Error: %s in %s should've a non null string-value, with one or more characters."
+    assert value is not None and isinstance(value, str) and len(value) > 0, (
+        err_str_msg % (field_name, class_name)
+    )
+
+
+def _run_benchmark(
+    suite_name: str,
+    benchmark_name: str,
+    jar_path: str,
     gc: str,
     heap_size: str,
-    iterations: int,
-) -> list[str]:
-    bench_path = _benchmark_paths[benchmark_group.value]
-    command = [
-        "java",
-        f"-XX:+Use{gc}GC",
-        f"-Xms{heap_size}m",
-        f"-Xmx{heap_size}m",
-        f"-Xlog:gc*,safepoint:file={utils.get_benchmark_log_path(gc, benchmark_group.value, benchmark, heap_size)}::filecount=0",
-    ]
-
-    settings = benchmarks_config.get(benchmark_group.value, {}).get(benchmark, {})
-    command.extend(settings.get("java", []))
-
-    command.extend(["-jar", bench_path, benchmark])
-
-    match benchmark_group:
-        case BENCHMARK_GROUP.RENAISSANCE:
-            command.extend(["-r", f"{iterations}", "--no-forced-gc"])
-        case BENCHMARK_GROUP.DACAPO:
-            command.extend(["-n", f"{iterations}", "--no-pre-iteration-gc"])
-        case _:
-            raise AssertionError(f"{benchmark_group} not supported")
-    return command
-
-
-def run_benchmark(
-    benchmark_group: BENCHMARK_GROUP,
-    benchmark: str,
-    gc: str,
-    heap_size: str,
-    iterations: int,
     jdk: str,
-    timeout: int | None,
+    timeout: int,
+    command: Optional[str],
+    java_opt: Optional[str],
+    exec_script: Optional[str],
 ) -> BenchmarkReport:
     """
     Args:
@@ -126,62 +329,40 @@ def run_benchmark(
         BenchmarkReport
     """
 
-    # NOTE: No-op timer and file
-    class DummyTimerAndFile:
-        def start(self):
-            pass
-
-        def close(self):
-            pass
-
-        def cancel(self):
-            pass
-
-    def kill_process(process: subprocess.Popen[bytes], cmd: str):
-        print(
-            f"Killing command: \n\t{' '.join(cmd)}\n\tdue to timeout with {timeout} seconds.\n"
-        )
-        # file = utils.get_benchmark_debug_path(
-        #     gc, benchmark_group.value, benchmark, heap_size
-        # )
-        # with open(file, "wb") as f:
-        #     if process.stdout is not None:
-        #         print(f"Writing to {file}...")
-        #         f.write(process.stdout.read())
+    def kill_process(
+        process: subprocess.Popen[bytes],
+        process_to_check: subprocess.Popen[bytes],
+        cmd: list[str],
+    ):
+        print(f"Killing command: \n\t{' '.join(cmd)}\n")
         process.kill()
-        # process.wait()
+        process_to_check.kill()
 
     benchmark_command = _get_benchmark_command(
-        benchmark_group, benchmark, gc, heap_size, iterations
+        suite_name, benchmark_name, jar_path, gc, heap_size, command, java_opt
     )
 
     print(
-        f"[{benchmark_group.value}]: Running benchmark {benchmark} with:\n"
+        f"[{suite_name}]: Running benchmark {benchmark_name} with:\n"
         f"\tGC: {gc}\n"
         f"\tHeap Size: {heap_size}\n"
-        f"\tIterations: {iterations}\n"
         f"\tCommand: {' '.join(benchmark_command)}"
     )
 
-    file = DummyTimerAndFile()
-    file_path = utils.get_benchmark_debug_path(
-        gc, benchmark_group.value, benchmark, heap_size
+    process = subprocess.Popen(
+        benchmark_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
-    if _debug:
-        file = open(file_path, "w")
-        process = subprocess.Popen(
-            benchmark_command, stdout=file, stderr=subprocess.STDOUT
-        )
-    else:
-        process = subprocess.Popen(
-            benchmark_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+
+    # NOTE: When the post exec script ends we stop polling the main `process`
+    process_to_check = process
+    if exec_script is not None:
+        print("Sleeping 10 seconds in order to give time for application to start")
+        time.sleep(10)
+        process_to_check = subprocess.Popen(
+            exec_script.split(" "), stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
 
-    timer = (
-        DummyTimerAndFile()
-        if timeout is None
-        else Timer(timeout, kill_process, (process, benchmark_command))
-    )
+    timer = Timer(timeout, kill_process, (process, process_to_check, benchmark_command))
 
     time_start = time.time_ns()
     pid = process.pid
@@ -189,11 +370,10 @@ def run_benchmark(
     cpu_time_stats = []
     io_time_stats = []
 
-    # TODO: see better polling method than sleeping 1 seconds for throughput
+    print("Starting...")
+
     timer.start()
-    while process.poll() is None:
-        # subprocess.run with capture_output doesn't seem to capture the whole output when
-        # using top with -1 flag
+    while process_to_check.poll() is None:
         p = subprocess.run(
             ["top", "-bn", "1", "-p", f"{pid}"], capture_output=True, text=True
         )
@@ -212,8 +392,10 @@ def run_benchmark(
         cpu_usage = round(float(lines[1].split()[8]) / utils.get_cpu_count(), 1)
         cpu_usage_stats.append(cpu_usage)
         time.sleep(0.1)
-    timer.cancel()
     throughput = time.time_ns() - time_start
+
+    # NOTE: Cancel timer
+    timer.cancel()
 
     cpu_usage_avg = round(float(numpy.mean(cpu_usage_stats)), 1)
     cpu_time_avg = round(float(numpy.mean(cpu_time_stats)), 1)
@@ -224,12 +406,26 @@ def run_benchmark(
         f"{cpu_usage_avg=} {cpu_time_avg=} {io_time_avg=} {p90_io=} and {throughput=}"
     )
 
-    if process.returncode == 0:
+    return_code = process_to_check.returncode
+    print("Current return code", return_code)
+
+    if process_to_check != process:
+        assert return_code == 0, (
+            f"Script exited with code {return_code}. It should always be successful"
+        )
+
+    if process.poll() is not None:
+        print("Main Application finished")
+        return_code = process.returncode
+
+    kill_process(process, process_to_check, benchmark_command)
+
+    if return_code == 0:
         print("Success")
         result = BenchmarkReport.build_benchmark_result(
             gc,
-            benchmark_group.value,
-            benchmark,
+            suite_name,
+            benchmark_name,
             heap_size,
             cpu_usage_avg,
             cpu_time_avg,
@@ -240,16 +436,14 @@ def run_benchmark(
         )
     else:
         error = ""
-        if _debug:
-            error = f"Check {file_path} for error logs."
-        elif process.stderr:
+        if process.stderr:
             error = process.stderr.read().decode()
 
         print(f"Error: {error}")
         result = BenchmarkReport.build_benchmark_error(
             gc,
-            benchmark_group.value,
-            benchmark,
+            suite_name,
+            benchmark_name,
             heap_size,
             cpu_usage_avg,
             cpu_time_avg,
@@ -259,166 +453,55 @@ def run_benchmark(
             process.returncode,
             error,
         )
-    file.close()
     result.save_to_json()
+
     return result
 
 
-def run_benchmark_groups(
+def _get_benchmark_command(
+    suite_name: str,
+    benchmark_name: str,
+    jar_path: str,
     gc: str,
     heap_size: str,
-    iterations: int,
-    jdk: str,
-    timeout: int | None,
-    benchmark_groups: Optional[list[BENCHMARK_GROUP]],
-) -> list[BenchmarkReport]:
-    """Run all benchmark groups or only the ones
-    specified in `benchmark_groups`
+    benchmark_cmd: Optional[str],
+    java_opt: Optional[str],
+) -> list[str]:
+    command = [
+        "java",
+        f"-XX:+Use{gc}GC",
+        f"-Xms{heap_size}m",
+        f"-Xmx{heap_size}m",
+        f"-Xlog:gc*,safepoint:file={utils.get_benchmark_log_path(gc, suite_name, benchmark_name, heap_size)}::filecount=0",
+    ]
 
-    Args:
-        `gc`: Garbage collector used when running the benchmarks
-        `heap_size`: Heap size that the JVM will use
-        `iterations`: Number of iterations to run the benchmark
-        `jdk`: Java version
-        `timeout`: Time in seconds to stop a benchmark from running
-        `benchmark_groups`: list[BENCHMARK_GROUP] | None -> If you want to run a
-        subset of the benchmarks
+    if java_opt is not None:
+        command.extend(java_opt.split(" "))
 
-    Returns:
-        list[BenchmarkReport]
-    """
-    benchmark_reports: list[BenchmarkReport] = []
-    groups: list[BENCHMARK_GROUP] = benchmark_groups or [*BENCHMARK_GROUP]
+    command.extend(["-jar", jar_path])
+    if benchmark_name is not None:
+        command.append(benchmark_name)
 
-    for benchmark_group in groups:
-        benchmarks = _get_benchmarks(benchmark_group)
+    if benchmark_cmd is not None:
+        command.extend(benchmark_cmd.split(" "))
 
-        for benchmark in benchmarks:
-            # NOTE: Override with config settings
-            settings = benchmarks_config.get(benchmark_group.value, {}).get(
-                benchmark, {}
-            )
-
-            result = run_benchmark(
-                benchmark_group,
-                benchmark,
-                gc,
-                heap_size,
-                settings.get("iterations", iterations),
-                jdk,
-                settings.get("timeout", timeout),
-            )
-
-            benchmark_reports.append(result)
-    return benchmark_reports
+    return command
 
 
-def run_benchmarks(
-    iterations: int,
-    jdk: str,
-    garbage_collectors: list[str],
-    skip_benchmarks: bool,
-    benchmark_groups: list[BENCHMARK_GROUP],
-    timeout: int | None = None,
-) -> dict[str, dict[str, list[BenchmarkReport]]]:
-    """Run benchmarks
-
-    Args:
-        iterations: number of iterations to run benchmarks
-        jdk: [TODO:description]
-        garbage_collectors: [TODO:description]
-        skip_benchmarks: [TODO:description]
-        benchmark_groups: [TODO:description]
-        timeout: [TODO:description]
-
-    Returns:
-        dict[gc, dict[heap_size, list[BenchmarkReport]]]
-    """
-
-    # { gc: heap_size: { list[BenchmarkReport } }
-    benchmark_reports: dict[str, dict[str, list[BenchmarkReport]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
-    heap_sizes: list[str] = utils.get_heap_sizes()
-
-    failed_benchmarks: dict[str, dict[str, list[tuple[str, str]]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
-
-    for gc in garbage_collectors:
-        for heap_size in heap_sizes:
-            if skip_benchmarks:
-                benchmark_reports[gc][heap_size] = load_benchmark_reports(
-                    gc, heap_size, jdk
-                )
-            else:
-                benchmark_reports[gc][heap_size].extend(
-                    run_benchmark_groups(
-                        gc,
-                        heap_size,
-                        iterations,
-                        jdk,
-                        timeout,
-                        benchmark_groups,
-                    )
-                )
-
-            for result in benchmark_reports[gc][heap_size]:
-                if not result.is_successfull():
-                    failed_benchmarks[result.heap_size][result.benchmark_name].append(
-                        (
-                            result.garbage_collector,
-                            result.error,  # type: ignore -> error is not None in case of a failed benchmark
-                        )
-                    )
-
-    # NOTE: using list to avoid modifying dict while iterating
-    for gc in list(benchmark_reports):
-        for heap_size, results in list(benchmark_reports[gc].items()):
-            valid_results = [
-                el
-                for el in results
-                if failed_benchmarks.get(el.heap_size, {}).get(el.benchmark_name)
-                is None
-            ]
-
-            if len(valid_results) == 0:
-                del benchmark_reports[gc][heap_size]
-                continue
-
-            benchmark_reports[gc][heap_size] = valid_results
-            assert all(
-                el.is_successfull() for el in valid_results
-            ), "All benchmarks should be successfull"
-
-        if len(benchmark_reports[gc]) > 0:
-            GarbageCollectorReport.build_garbage_collector_report(
-                benchmark_reports[gc]
-            ).save_to_json()
-        else:
-            f"Garbage Collector {gc} doesn't have successfull benchmarks."
-            del benchmark_reports[gc]
-
-    if len(failed_benchmarks) > 0:
-        error_report = ErrorReport(jdk, failed_benchmarks)
-        error_report.save_to_json()
-
-    return benchmark_reports
-
-
-def load_benchmark_reports(
+def _load_benchmark_reports(
     garbage_collector: str, heap_size: str, jdk: str
-) -> list[BenchmarkReport]:
-    return [
-        BenchmarkReport.load_from_json(i)
-        for i in glob.glob(
-            f"{utils._BENCHMARK_STATS_PATH}/*{garbage_collector}_{heap_size}m_{jdk}*.json"
-        )
-    ]
-
-
-def load_garbage_collector_results(jdk: str) -> list[GarbageCollectorReport]:
-    return [
-        GarbageCollectorReport.load_from_json(i)
-        for i in glob.glob(f"{utils._BENCHMARK_STATS_PATH}/gc_stats/*{jdk}.json")
-    ]
+) -> tuple[list[BenchmarkReport], list[BenchmarkReport]]:
+    return (
+        [
+            BenchmarkReport.load_from_json(i)
+            for i in glob.glob(
+                f"{utils._BENCHMARK_STATS_PATH}/*{garbage_collector}_{heap_size}m_{jdk}.json"
+            )
+        ],
+        [
+            BenchmarkReport.load_from_json(i)
+            for i in glob.glob(
+                f"{utils._BENCHMARK_STATS_PATH}/*{garbage_collector}_{heap_size}m_{jdk}_error.json"
+            )
+        ],
+    )

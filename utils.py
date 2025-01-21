@@ -5,15 +5,9 @@ import subprocess
 from typing import Optional
 
 _dir = os.path.dirname(__file__)
-_BENCHMARK_PATH = f"{_dir}/benchmark_apps"
 _BENCHMARK_STATS_PATH = f"{_dir}/benchmark_stats"
 _BENCHMARK_LOG_PATH = f"{_dir}/benchmark_logs"
 _BENCHMARK_MATRIX_PATH = f"{_dir}/benchmark_matrix"
-_BENCHMARK_DEBUG_PATH = f"{_dir}/benchmark_debug_log"
-
-_benchmark_paths = {
-    "Renaissance": f"{_BENCHMARK_PATH}/renaissance-gpl-0.15.0.jar",
-}
 
 # NOTE: there is a no-op GC Epsilon
 _GCS = ["G1", "Parallel", "Shenandoah", "Z"]
@@ -42,12 +36,6 @@ def get_benchmark_log_path(
     return f"{_BENCHMARK_LOG_PATH}/{benchmark_group}_{benchmark_name}_{gc}_{heap_size}m.log"
 
 
-def get_benchmark_debug_path(
-    gc: str, benchmark_group: str, benchmark_name: str, heap_size: str
-) -> str:
-    return f"{_BENCHMARK_DEBUG_PATH}/{benchmark_group}_{benchmark_name}_{gc}_{heap_size}m.log"
-
-
 def get_benchmark_stats_path(
     gc: str,
     benchmark_group: str,
@@ -69,10 +57,6 @@ def get_gc_stats_path(gc: str, jdk: str) -> str:
 
 def get_matrix_path(jdk: str, date: str) -> str:
     return f"{_BENCHMARK_MATRIX_PATH}/{jdk}_{date}.json"
-
-
-def get_benchmark_jar_path(benchmark_group: str) -> str:
-    return _benchmark_paths[benchmark_group]
 
 
 def _parse_java_version() -> str | None:

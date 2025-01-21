@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import mock_open, patch
 
-from benchmark_config import (
+from benchmark import (
     BenchmarkRunOptions,
     BenchmarkSuiteCollection,
     BenchmarkConfig,
@@ -22,7 +22,7 @@ class TestBenchmarkConfig(unittest.TestCase):
                 "BenchmarkSuiteCollection.__init__() missing 1 required positional argument: 'benchmark_suites'",
             ),
             "String Value": (
-                '{"benchmark_suites": "teste"}',
+                '{"benchmark_suites": "test"}',
                 TypeError,
                 "benchmark_config.BenchmarkSuite() argument after ** must be a mapping, not str",
             ),
@@ -88,9 +88,9 @@ class TestBenchmarkConfig(unittest.TestCase):
                 "Error: command with type <class 'int'> should have type in (<class 'str'>, <class 'NoneType'>).",
             ),
             "Invalid run_options type java options": (
-                '{"benchmark_suites": [{"jar_path": "5", "suite_name": "a", "run_options": {"extra_java_options": 5}}]}',
+                '{"benchmark_suites": [{"jar_path": "5", "suite_name": "a", "run_options": {"java_options": 5}}]}',
                 AssertionError,
-                "Error: extra_java_options with type <class 'int'> should have type in (<class 'str'>, <class 'NoneType'>).",
+                "Error: java_options with type <class 'int'> should have type in (<class 'str'>, <class 'NoneType'>).",
             ),
             "Invalid run_options type post exec script": (
                 '{"benchmark_suites": [{"jar_path": "5", "suite_name": "a", "run_options": {"post_exec_script": 5}}]}',
@@ -200,17 +200,17 @@ class TestBenchmarkConfig(unittest.TestCase):
             "Invalid characters .": (
                 '{"benchmark_suites": [{"suite_name": ".", "jar_path": "a"}]}',
                 ValueError,
-                "Error: '.' has invalid charactes: '.'. Allowed Characters: abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_.",
+                "Error: '.' has invalid characters: '.'. Allowed Characters: abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_.",
             ),
             "Invalid characters /": (
                 '{"benchmark_suites": [{"suite_name": "/", "jar_path": "a"}]}',
                 ValueError,
-                "Error: '/' has invalid charactes: '/'. Allowed Characters: abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_.",
+                "Error: '/' has invalid characters: '/'. Allowed Characters: abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_.",
             ),
             "Invalid characters \\": (
                 '{"benchmark_suites": [{"suite_name": "\\\\", "jar_path": "a"}]}',
                 ValueError,
-                "Error: '\\' has invalid charactes: '\\'. Allowed Characters: abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_.",
+                "Error: '\\' has invalid characters: '\\'. Allowed Characters: abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_.",
             ),
         }
 

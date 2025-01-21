@@ -1,35 +1,78 @@
 {
-    "benchmark_suites": [
+  "benchmark_suites": [
+    {
+      "suite_name": "DaCapo",
+      "jar_path": "benchmark_apps/dacapo-23.11-chopin.jar",
+      "run_options": { "command": "-n 10 --no-pre-iteration-gc" },
+      "benchmarks_config": [
+        { "name": "avrora" },
+        { "name": "batik" },
+        { "name": "biojava" },
         {
-            "suite_name": "DaCapo",
-            "jar_path": "benchmark_apps/dacapo-23.11-chopin.jar",
-            "benchmarks_config": [
-                {
-                    "name": "kafka",
-                    "run_options": { "extra_java_options": "-XX:+ExitOnOutOfMemoryError"}
-                },
-                {
-                    "name": "cassandra",
-                    "run_options": {
-                        "extra_java_options": "-Djava.security.manager=allow"
-                    }
-                },
-                {
-                    "name": "h2o",
-                    "run_options": {
-                        "extra_java_options": "-Dsys.ai.h2o.debug.allowJavaVersions=21"
-                    }
-                }
-            ]
+          "name": "cassandra",
+          "run_options": {
+            "java_options": "-Djava.security.manager=allow"
+          }
         },
+        { "name": "eclipse" },
+        { "name": "fop" },
+        { "name": "graphchi" },
+        { "name": "h2" },
         {
-            "suite_name": "PetClinic",
-            "jar_path": "benchmark_apps/spring-petclinic-3.3.0-SNAPSHOT.jar"
-            "run_options": {
-                "post_exec_script": "benchmark-spring.sh"
-                "iterations": 1
-            }
-            
-        }
-    ]
+          "name": "h2o",
+          "run_options": {
+            "java_options": "-Dsys.ai.h2o.debug.allowJavaVersions=21"
+          }
+        },
+        { "name": "jme" },
+        { "name": "jython" },
+        {
+          "name": "kafka",
+          "run_options": { "java_options": "-XX:+ExitOnOutOfMemoryError" }
+        },
+        { "name": "luindex" },
+        { "name": "lusearch" },
+        { "name": "pmd" },
+        { "name": "spring" },
+        { "name": "sunflow" },
+        { "name": "tomcat" },
+        { "name": "tradebeans" },
+        { "name": "tradesoap" },
+        { "name": "xalan" },
+        { "name": "zxing" }
+      ]
+    },
+    {
+      "suite_name": "Renaissance",
+      "jar_path": "benchmark_apps/renaissance-gpl-0.16.0.jar",
+      "run_options": { "command": "-r 10 --no-forced-gc" },
+      "benchmarks_config": [
+        { "name": "scrabble" },
+        { "name": "page-rank" },
+        { "name": "future-genetic" },
+        { "name": "akka-uct" },
+        { "name": "movie-lens" },
+        { "name": "scala-doku" },
+        { "name": "chi-square" },
+        { "name": "fj-kmeans" },
+        { "name": "rx-scrabble" },
+        { "name": "db-shootout" },
+        { "name": "neo4j-analytics" },
+        { "name": "finagle-http" },
+        { "name": "reactors" },
+        { "name": "dec-tree" },
+        { "name": "scala-stm-bench7" },
+        { "name": "naive-bayes" },
+        { "name": "als" },
+        { "name": "par-mnemonics" },
+        { "name": "scala-kmeans" },
+        { "name": "philosophers" },
+        { "name": "log-regression" },
+        { "name": "gauss-mix" },
+        { "name": "mnemonics" },
+        { "name": "dotty" },
+        { "name": "finagle-chirper" }
+      ]
+    }
+  ]
 }
